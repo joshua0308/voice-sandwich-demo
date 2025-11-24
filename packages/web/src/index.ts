@@ -8,12 +8,11 @@ import { cors } from "hono/cors";
 import { join } from "path";
 
 import {
-  VADBufferTransform,
-  OpenAISTTTransform,
+  AssemblyAISTTTransform,
   AgentTransform,
   AIMessageChunkTransform,
   ElevenLabsTTSTransform,
-  OpusToPcmTransform,
+  SentenceChunkTransform,
 } from "./transforms";
 
 const app = new Hono();
@@ -38,19 +37,16 @@ app.get(
       },
     });
 
-    // Pipeline
     const pipeline = inputStream
-      .pipeThrough(new OpusToPcmTransform())
-      .pipeThrough(new VADBufferTransform())
       .pipeThrough(
-        new OpenAISTTTransform({
-          apiKey: process.env.OPENAI_API_KEY!,
-          model: "whisper-1",
+        new AssemblyAISTTTransform({
+          apiKey: process.env.ASSEMBLYAI_API_KEY!,
+          sampleRate: 16000,
         })
       )
       .pipeThrough(new AgentTransform(agent))
       .pipeThrough(new AIMessageChunkTransform())
-      // .pipeThrough(new SentenceChunkTransform())
+      .pipeThrough(new SentenceChunkTransform()) // Stream sentences to TTS as they're generated
       .pipeThrough(
         new ElevenLabsTTSTransform({
           apiKey: process.env.ELEVENLABS_API_KEY!,

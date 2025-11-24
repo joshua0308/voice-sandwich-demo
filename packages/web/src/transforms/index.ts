@@ -1,5 +1,6 @@
 export * from "./AgentTransform";
 export * from "./AIMessageChunkTransform";
+export * from "./AssemblyAISTTTransform";
 export * from "./ElevenLabsTTSTransform";
 export * from "./openai";
 export * from "./SentenceChunkerTransform";
