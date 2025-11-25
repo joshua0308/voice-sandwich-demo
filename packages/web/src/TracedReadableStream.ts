@@ -31,14 +31,14 @@ export class TracedTransformStream<I = any, O = any> extends TransformStream<
       ? TracedTransformStream.createStreamTransformer(
           transformerOrStream as ReadableWritablePair<O, I>,
           () => this.parentRun,
-          name,
+          transformerOrStream.constructor.name ?? name,
           runType,
           metadata
         )
       : TracedTransformStream.createProxyTransformer(
           transformerOrStream as Transformer<I, O>,
           () => this.parentRun,
-          name,
+          transformerOrStream.constructor.name ?? name,
           runType,
           metadata
         );
