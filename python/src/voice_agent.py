@@ -1,50 +1,98 @@
-from time import sleep
-from typing import Any, Iterator
+from typing import Any
 
 from dotenv import load_dotenv
 from typing_extensions import AsyncIterator
-from langchain_core.runnables import RunnableGenerator, RunnableLambda
+from langchain_core.runnables import RunnableGenerator
 from langchain_core.messages import AIMessage
 from langchain.agents import create_agent
 
-
 load_dotenv()
 
-# this ideally should be coming from a websocket or something else
-# that is streaming data
-async def _input_stream(input: AsyncIterator[Any]) -> AsyncIterator[str]:
-    async for token in input:
-        yield token
-        sleep(1)
+# Combined microphone + transcription node
+# Captures audio and transcribes until AssemblyAI returns a final transcript
+async def _microphone_and_transcribe(input: AsyncIterator[Any]) -> AsyncIterator[str]:
+    """
+    Capture audio from microphone and transcribe with AssemblyAI.
+    Stops microphone when AssemblyAI sends a final transcript.
 
+    Yields:
+        Final transcribed text string
+    """
+    import asyncio
+    import pyaudio
+    from assemblyai_stt import AssemblyAISTTTransform
 
-# this is a simple buffer that emits a string when the buffer reaches max size of 2
-# this should be replaced with some more meaningful VAD buffer
-async def _buffer_stream(input: AsyncIterator[str]) -> AsyncIterator[str]:
-    buffer = []
-    async for token in input:
-        buffer.append(token)
-        if len(buffer) >= 2:
-            yield "".join(buffer)
-            buffer = []
+    print("[DEBUG] _microphone_and_transcribe: Starting combined mic + transcription")
 
-    # Emit any remaining tokens in buffer
-    if buffer:
-        # Flatten buffer if it contains lists
-        flattened = []
-        for item in buffer:
-            if isinstance(item, list):
-                flattened.extend(item)
-            else:
-                flattened.append(item)
-        yield "".join(flattened)
+    # Initialize microphone
+    p = pyaudio.PyAudio()
+    stream = None
+    stop_event = asyncio.Event()
 
+    try:
+        # Open microphone stream
+        stream = p.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=16000,
+            input=True,
+            frames_per_buffer=1600
+        )
+        print("[DEBUG] Microphone opened")
 
-# this is where we would call openai/11labs/etc. to transcribe the stream
-# (imagine the input is an audio buffer)
-async def _transcribe_stream(input: AsyncIterator[str]) -> AsyncIterator[str]:
-    transcribed = "".join([token for token in input])
-    yield transcribed
+        # Initialize AssemblyAI
+        stt = AssemblyAISTTTransform(sample_rate=16000)
+        await stt.connect()
+        print("[DEBUG] AssemblyAI connected")
+
+        # Background task to capture and send audio
+        async def capture_and_send():
+            chunk_count = 0
+            try:
+                while not stop_event.is_set():
+                    audio_data = await asyncio.get_event_loop().run_in_executor(
+                        None, stream.read, 1600, False
+                    )
+                    await stt.send_audio(audio_data)
+                    chunk_count += 1
+                    if chunk_count % 50 == 0:
+                        print(f"[DEBUG] Captured {chunk_count} audio chunks")
+            except Exception as e:
+                print(f"[DEBUG] Audio capture stopped: {e}")
+            finally:
+                print(f"[DEBUG] Total audio chunks captured: {chunk_count}")
+
+        send_task = asyncio.create_task(capture_and_send())
+
+        # Listen for final transcript from AssemblyAI
+        transcripts = []
+        async for transcript in stt._receive_messages():
+            print(f"[DEBUG] Received transcript: {transcript}")
+            transcripts.append(transcript)
+            # Stop microphone after first final transcript
+            stop_event.set()
+            break
+
+        # Wait for send task to finish
+        await send_task
+
+        # Terminate AssemblyAI session
+        await stt.terminate()
+        await stt.close()
+
+        # Yield the final transcript
+        if transcripts:
+            final_transcription = " ".join(transcripts)
+            print(f"[DEBUG] Yielding final: {final_transcription}")
+            yield final_transcription
+
+    finally:
+        # Clean up microphone
+        if stream:
+            stream.stop_stream()
+            stream.close()
+        p.terminate()
+        print("[DEBUG] Microphone closed")
 
 
 agent = create_agent(
@@ -56,36 +104,48 @@ agent = create_agent(
 async def _stream_agent(
     input: AsyncIterator[tuple[AIMessage, Any]]
 ) -> AsyncIterator[str]:
+    print("[DEBUG] _stream_agent: Starting agent stream")
     async for chunk in input:
+        print(f"[DEBUG] _stream_agent: Received chunk: {chunk}")
         input_message = {"role": "user", "content": chunk}
-        print(f"input message: {input_message}")
+        print(f"[DEBUG] _stream_agent: Sending to agent: {input_message}")
         async for message, _ in agent.astream({"messages": [input_message]}, stream_mode="messages"):
-            print(message.text)
+            print(f"[DEBUG] _stream_agent: Agent response: {message.text}")
             yield message.text
 
 
 # this is where we would call openai/11labs/etc. to generate text to speech
 async def _tts_stream(input: str) -> AsyncIterator[str]:
-    print(f"got input {input}")
+    print(f"[DEBUG] _tts_stream: Got input: {input}")
     yield "hello"
 
+
 audio_stream = (
-    RunnableGenerator(_input_stream)
-    | RunnableGenerator(_buffer_stream)
-    | RunnableLambda(_transcribe_stream)  # await transcription
+    RunnableGenerator(_microphone_and_transcribe)  # Combined mic + transcription
     | RunnableGenerator(_stream_agent)
     | RunnableGenerator(_tts_stream)
 )
 
-stream_instance = audio_stream.astream(["hey", " there", " delilah"])
-
 
 async def main():
-    async for token in stream_instance:
-        print("output: ", token)
+    """
+    Voice pipeline: Microphone → AssemblyAI STT → Agent → TTS
+    """
+    print("Starting voice pipeline...")
+    print("Speak into your microphone. Press Ctrl+C to stop.\n")
+
+    try:
+        print("[DEBUG] main: Starting audio_stream.astream(None)")
+        async for output in audio_stream.astream(None):
+            print(f"[DEBUG] main: Final output: {output}")
+    except KeyboardInterrupt:
+        print("\n\nStopping pipeline...")
+    except Exception as e:
+        print(f"[DEBUG] main: Error occurred: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":
     import asyncio
-
     asyncio.run(main())
