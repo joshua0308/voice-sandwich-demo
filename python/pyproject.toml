@@ -5,7 +5,10 @@ requires-python = ">=3.11"
 dependencies = [
     "langchain-core",
     "langchain",
-    "python-dotenv"
+    "python-dotenv",
+    "assemblyai",
+    "websockets",
+    "pyaudio"
 ]
 
 [project.optional-dependencies]
