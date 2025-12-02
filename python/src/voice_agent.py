@@ -9,6 +9,7 @@ from typing_extensions import AsyncIterator
 from langchain_core.runnables import RunnableGenerator, Runnable
 from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage
+from langgraph.checkpoint.memory import InMemorySaver
 import pyaudio
 
 from assemblyai_stt import microphone_and_transcribe_once
@@ -43,6 +44,8 @@ def get_weather(location: str) -> str:
     """Get the weather at a location."""
     return f"The weather in {location} is sunny with a high of 75°F."
 
+checkpointer = InMemorySaver()
+config = {"configurable": {"thread_id": "1"}}
 
 agent = create_agent(
     model="anthropic:claude-haiku-4-5",
@@ -50,6 +53,7 @@ agent = create_agent(
     system_prompt=(
         "You are a helpful assistant. Target concise responses under 50 words."
     ),
+    checkpointer=checkpointer,
 )
 
 
@@ -173,6 +177,7 @@ class VoicePipeline:
 
             async for message, _ in self.agent.astream(
                 {"messages": [input_message]},
+                config,
                 stream_mode="messages",
             ):
                 if isinstance(message, AIMessage) and message.text:
