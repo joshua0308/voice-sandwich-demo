@@ -155,14 +155,15 @@ class VoicePipeline:
         )
         self.turn_number = 0
 
+        self.buffer_runnable = RunnableGenerator(self._buffer_node)
         self.pipeline = (
-            RunnableGenerator(self._buffer_node)
-            | RunnableGenerator(self._transcribe_node)
+            RunnableGenerator(self._transcribe_node)
             | RunnableGenerator(self._agent_stream)
             | RunnableGenerator(self._tts_stream)
         )
+        self.run_runnable = RunnableGenerator(self._run_generator)
 
-    async def _buffer_and_transcribe(
+    async def _buffer_node(
         self, audio_stream: AudioStream
     ) -> AsyncIterator[HumanMessage]:
         """
@@ -205,7 +206,7 @@ class VoicePipeline:
                     current_audio.clear()
 
                 if not turn_audio:
-                    print("[DEBUG] _buffer_and_transcribe: Empty audio, skipping turn")
+                    print("[DEBUG] _buffer_node: Empty audio, skipping turn")
                     continue
 
                 self.turn_number += 1
@@ -229,13 +230,6 @@ class VoicePipeline:
             with contextlib.suppress(asyncio.CancelledError):
                 await send_task
             await stt.close()
-
-    async def _buffer_node(
-        self, message_stream: AsyncIterator[HumanMessage]
-    ) -> AsyncIterator[HumanMessage]:
-        """Pass-through node that yields each HumanMessage as-is."""
-        async for message in message_stream:
-            yield message
 
     async def _transcribe_node(
         self, message_stream: AsyncIterator[HumanMessage]
@@ -313,37 +307,31 @@ class VoicePipeline:
                 },
             )
 
-    async def run(self, audio_stream: AudioStream) -> None:
-        """Drive the LCEL pipeline for the provided audio stream."""
+    async def _run_generator(
+        self, audio_stream: AudioStream
+    ) -> AsyncIterator[Any]:
+        """Async generator that drives the LCEL pipeline turn by turn."""
 
-        message_stream = self._buffer_and_transcribe(audio_stream)
         last_output: Any = None
 
-        async def single_turn_stream(message: HumanMessage) -> AsyncIterator[HumanMessage]:
-            yield message
-
         try:
-            while True:
-                try:
-                    message = await message_stream.__anext__()
-                except StopAsyncIteration:
-                    break
-
-                async for output in self.pipeline.atransform(
-                    single_turn_stream(message)
-                ):
+            async for message in self.buffer_runnable.atransform(audio_stream):
+                async for output in self.pipeline.astream(message):
                     last_output = output
                     print(f"[DEBUG] VoicePipeline.run: pipeline output {output}")
+                    yield output
         except KeyboardInterrupt:
             raise
         except Exception as exc:  # pragma: no cover - defensive logging
             print(f"[DEBUG] VoicePipeline.run: pipeline error: {exc}")
             print(f"[DEBUG] VoicePipeline.run: last output {last_output}")
-        finally:
-            aclose = getattr(message_stream, "aclose", None)
-            if aclose is not None:
-                with contextlib.suppress(Exception):
-                    await aclose()
+            raise
+
+    async def run(self, audio_stream: AudioStream) -> None:
+        """Compatibility wrapper that exhausts the run generator."""
+
+        async for _ in self.run_runnable.atransform(audio_stream):
+            pass
 
 
 async def main():
@@ -364,7 +352,8 @@ async def main():
     )
 
     try:
-        await voice_pipeline.run(audio_stream)
+        async for _ in voice_pipeline.run_runnable.atransform(audio_stream):
+            pass
     except KeyboardInterrupt:
         print("\n\nStopping pipeline...")
     except Exception as e:
