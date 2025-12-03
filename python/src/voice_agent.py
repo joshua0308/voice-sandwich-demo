@@ -155,15 +155,16 @@ class VoicePipeline:
         )
         self.turn_number = 0
 
-        self.buffer_runnable = RunnableGenerator(self._buffer_node)
+        self.buffer_runnable = RunnableGenerator(self.buffer)
         self.pipeline = (
-            RunnableGenerator(self._transcribe_node)
-            | RunnableGenerator(self._agent_stream)
-            | RunnableGenerator(self._tts_stream)
+            RunnableGenerator(self.transcribe)
+            | RunnableGenerator(self.stream_agent)
+            | RunnableGenerator(self.text_to_speech)
         )
-        self.run_runnable = RunnableGenerator(self._run_generator)
+        self.pipeline.name = "conversation_turn"
+        self.run_runnable = RunnableGenerator(self.voice_run)
 
-    async def _buffer_node(
+    async def buffer(
         self, audio_stream: AudioStream
     ) -> AsyncIterator[HumanMessage]:
         """
@@ -231,7 +232,7 @@ class VoicePipeline:
                 await send_task
             await stt.close()
 
-    async def _transcribe_node(
+    async def transcribe(
         self, message_stream: AsyncIterator[HumanMessage]
     ) -> AsyncIterator[dict[str, Any]]:
         """Extract transcript metadata for downstream agent consumption."""
@@ -244,7 +245,7 @@ class VoicePipeline:
                 continue
             yield {"turn": turn, "transcript": transcript}
 
-    async def _agent_stream(
+    async def stream_agent(
         self, transcript_stream: AsyncIterator[dict[str, Any]]
     ) -> AsyncIterator[dict[str, Any]]:
         """
@@ -276,7 +277,7 @@ class VoicePipeline:
 
             yield {"turn": turn, "response_text": response_text}
 
-    async def _tts_stream(
+    async def text_to_speech(
         self, response_stream: AsyncIterator[dict[str, Any]]
     ) -> AsyncIterator[AIMessage]:
         """
@@ -307,7 +308,7 @@ class VoicePipeline:
                 },
             )
 
-    async def _run_generator(
+    async def voice_run(
         self, audio_stream: AudioStream
     ) -> AsyncIterator[Any]:
         """Async generator that drives the LCEL pipeline turn by turn."""
@@ -318,7 +319,7 @@ class VoicePipeline:
             async for message in self.buffer_runnable.atransform(audio_stream):
                 async for output in self.pipeline.astream(message):
                     last_output = output
-                    print(f"[DEBUG] VoicePipeline.run: pipeline output {output}")
+                    print(f"[DEBUG] VoicePipeline.run: pipeline output {output.response_metadata}")
                     yield output
         except KeyboardInterrupt:
             raise
