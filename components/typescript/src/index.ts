@@ -21,6 +21,7 @@ import { AssemblyAISTT } from "./assemblyai/index";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const STATIC_DIR = path.join(__dirname, "../static");
+const PORT = parseInt(process.env.PORT || "8000");
 
 const app = new Hono();
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -204,7 +205,7 @@ async function* ttsStream(
   }
 }
 
-app.get("/", serveStatic({ root: STATIC_DIR }));
+app.get("/*", serveStatic({ root: STATIC_DIR }));
 
 app.get(
   "/ws",
@@ -222,12 +223,14 @@ app.get(
     // Agent Responses -> Audio
     const agentAudioStream = ttsStream(agentResponseStream);
 
-    // Stream the final audio output back to the WebSocket client
-    for await (const output of agentAudioStream) {
-      if (currentSocket?.readyState === 1) {
-        currentSocket.send(output as Uint8Array<ArrayBuffer>);
+    const flushPromise = iife(async () => {
+      // Stream the final audio output back to the WebSocket client
+      for await (const output of agentAudioStream) {
+        if (currentSocket?.readyState === 1) {
+          currentSocket.send(output as Uint8Array<ArrayBuffer>);
+        }
       }
-    }
+    });
 
     return {
       onOpen(_, ws) {
@@ -242,9 +245,10 @@ app.get(
           inputStream.push(new Uint8Array(data));
         }
       },
-      onClose() {
+      async onClose() {
         // Signal end of stream when socket closes
         inputStream.cancel();
+        await flushPromise;
       },
     };
   })
@@ -252,7 +256,9 @@ app.get(
 
 const server = serve({
   fetch: app.fetch,
-  port: 8000,
+  port: PORT,
 });
 
 injectWebSocket(server);
+
+console.log(`Server is running on port ${PORT}`);
