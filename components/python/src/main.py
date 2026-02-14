@@ -15,7 +15,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from starlette.staticfiles import StaticFiles
 
 from assemblyai_stt import AssemblyAISTT
-from components.python.src.cartesia_tts import CartesiaTTS
+from cartesia_tts import CartesiaTTS
 from events import (
     AgentChunkEvent,
     AgentEndEvent,
@@ -70,7 +70,7 @@ ${CARTESIA_TTS_SYSTEM_PROMPT}
 """
 
 agent = create_agent(
-    model="anthropic:claude-haiku-4-5",
+    model="openai:gpt-4o-mini",
     tools=[add_to_order, confirm_order],
     system_prompt=system_prompt,
     checkpointer=InMemorySaver(),
