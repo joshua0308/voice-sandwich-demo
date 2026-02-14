@@ -28,7 +28,7 @@ const PORT = parseInt(process.env.PORT ?? "8000");
 if (!existsSync(STATIC_DIR)) {
   console.error(
     `Web build not found at ${STATIC_DIR}.\n` +
-      "Run 'make build-web' or 'make dev-ts' from the project root."
+    "Run 'make build-web' or 'make dev-ts' from the project root."
   );
   process.exit(1);
 }
@@ -76,8 +76,8 @@ Available cheeses: swiss, cheddar, provolone.
 ${CARTESIA_TTS_SYSTEM_PROMPT}
 `;
 
-const agent = createAgent({
-  model: "claude-haiku-4-5",
+export const agent = createAgent({
+  model: "openai:gpt-4o-mini",
   tools: [addToOrder, confirmOrder],
   checkpointer: new MemorySaver(),
   systemPrompt: systemPrompt,
