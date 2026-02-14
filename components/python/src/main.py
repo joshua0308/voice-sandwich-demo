@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from langchain.agents import create_agent
 from langchain.messages import AIMessage, HumanMessage, ToolMessage
@@ -71,7 +71,7 @@ ${CARTESIA_TTS_SYSTEM_PROMPT}
 
 agent = create_agent(
     model="openai:gpt-4o-mini",
-    tools=[add_to_order, confirm_order],
+    # tools=[add_to_order, confirm_order],
     system_prompt=system_prompt,
     checkpointer=InMemorySaver(),
 )
@@ -196,12 +196,12 @@ async def _agent_stream(
                             )
 
                 # Emit tool results (tool messages)
-                if isinstance(message, ToolMessage):
-                    yield ToolResultEvent.create(
-                        tool_call_id=getattr(message, "tool_call_id", ""),
-                        name=getattr(message, "name", "unknown"),
-                        result=str(message.content) if message.content else "",
-                    )
+                # if isinstance(message, ToolMessage):
+                #     yield ToolResultEvent.create(
+                #         tool_call_id=getattr(message, "tool_call_id", ""),
+                #         name=getattr(message, "name", "unknown"),
+                #         result=str(message.content) if message.content else "",
+                #     )
 
             # Signal that the agent has finished responding for this turn
             yield AgentEndEvent.create()
@@ -285,11 +285,14 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_bytes()
             yield data
 
-    output_stream = pipeline.atransform(websocket_audio_stream())
+    try:
+        output_stream = pipeline.atransform(websocket_audio_stream())
 
-    # Process all events from the pipeline, sending events back to the client
-    async for event in output_stream:
-        await websocket.send_json(event_to_dict(event))
+        # Process all events from the pipeline, sending events back to the client
+        async for event in output_stream:
+            await websocket.send_json(event_to_dict(event))
+    except WebSocketDisconnect:
+        print("Client disconnected")
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

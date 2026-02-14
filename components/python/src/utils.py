@@ -8,6 +8,8 @@ and other common operations across the voice agent system.
 import asyncio
 from typing import Any, AsyncIterator, TypeVar
 
+from starlette.websockets import WebSocketDisconnect
+
 
 T = TypeVar("T")
 
@@ -47,8 +49,12 @@ async def merge_async_iters(*aiters: AsyncIterator[T]) -> AsyncIterator[T]:
     sentinel = object()
 
     async def producer(aiter: AsyncIterator[Any]) -> None:
-        async for item in aiter:
-            await queue.put(item)
+        try:
+            async for item in aiter:
+                await queue.put(item)
+        except WebSocketDisconnect:
+            print("socket disconnected")
+            pass
         await queue.put(sentinel)
 
     async with asyncio.TaskGroup() as tg:
